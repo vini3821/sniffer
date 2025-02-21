@@ -1,34 +1,33 @@
-import socket
-import threading
+from scapy.all import sniff, TCP
 
-PORTAS = [21, 22, 80, 443]
+conexoes_ssh = set()  # Para rastrear conexões SSH
 
-def escutar_porta(porta):
-    try:
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.bind(("0.0.0.0", porta))  
-        server_socket.listen(5)
+def monitorar_pacotes(pacote):
+    if pacote.haslayer('IP') and pacote.haslayer(TCP):
+        ip_src = pacote['IP'].src
+        ip_dst = pacote['IP'].dst
+        porta_src = pacote.sport
+        porta_dst = pacote.dport
+        
+        if porta_dst == 22:  # Verifica se a porta de destino é 22 (SSH)
+            if pacote[TCP].flags == 'S':  # Pacote SYN
+                print(f"[!] Tentativa de acesso SSH detectada: {ip_src}:{porta_src} -> {ip_dst}:{porta_dst}")
+            elif pacote[TCP].flags == 'SA':  # Pacote SYN-ACK
+                conexao = (ip_src, porta_src, ip_dst, porta_dst)
+                if conexao not in conexoes_ssh:
+                    conexoes_ssh.add(conexao)
+                    print(f"[+] Conexão SSH estabelecida: {ip_src}:{porta_src} -> {ip_dst}:{porta_dst}")
+            elif pacote[TCP].flags == 'A':  # Pacote ACK
+                if (ip_dst, porta_dst, ip_src, porta_src) in conexoes_ssh:
+                    print(f"[+] Acesso SSH confirmado: {ip_src}:{porta_src} -> {ip_dst}:{porta_dst}")
+                else:
+                    print(f"[!] Acesso SSH não registrado: {ip_src}:{porta_src} -> {ip_dst}:{porta_dst}")
 
-        print(f"[*] Monitorando conexões na porta {porta}...")
+# Defina a porta que você deseja monitorar
+PORTA_MONITORADA = [22]
 
-        while True:
-            client_socket, addr = server_socket.accept()
-            print(f"[!] Conexão detectada na porta {porta} de {addr[0]}")
+# Filtra pacotes para a porta SSH
+filtro = f"tcp and (port {' or port '.join(map(str, PORTA_MONITORADA))})"
 
-            try:
-                dados = client_socket.recv(1024).decode(errors="ignore")  entrada do 
-                if dados:
-                    print(f"[+] Dados recebidos de {addr[0]} na porta {porta}: {dados.strip()}")
-            except Exception as e:
-                print(f"[X] Erro ao capturar dados: {e}")
-
-            client_socket.close()
-    except Exception as e:
-        print(f"[X] Erro na porta {porta}: {e}")
-
-for porta in PORTAS:
-    threading.Thread(target=escutar_porta, args=(porta,), daemon=True).start()
-
-# Mantém o script rodando
-while True:
-    pass
+# Inicia a captura de pacotes
+sniff(filter=filtro, prn=monitorar_pacotes, store=0, iface='nome_da_interface')  # Substitua 'nome_da_interface' pela interface correta
